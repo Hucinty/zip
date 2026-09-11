@@ -1,0 +1,374 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>In-Browser ZIP Runner</title>
+
+  <!-- PWA & Mobile Meta Tags -->
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="theme-color" content="#0070f3" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="ZIP Runner" />
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2875/2875394.png" />
+
+  <!-- External Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --primary: #0070f3;
+      --bg: #f8f9fa;
+      --surface: #ffffff;
+      --border: #e0e0e0;
+      --text: #222222;
+      --text-muted: #666666;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    }
+    #sidebar {
+      width: 320px;
+      min-width: 280px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
+      z-index: 10;
+    }
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      overflow-y: auto;
+      min-width: 0;
+    }
+    @media (max-width: 768px) {
+      body {
+        flex-direction: column;
+        overflow-y: auto;
+      }
+      #sidebar {
+        width: 100%;
+        min-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 12px;
+      }
+      #fileList { max-height: 150px; }
+      #main {
+        padding: 12px;
+        flex: none;
+        min-height: 60vh;
+      }
+      #outputContainer iframe,
+      #outputContainer video {
+        height: 50vh !important;
+        max-height: 50vh !important;
+      }
+    }
+    #installBtn {
+      display: none;
+      width: 100%;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #installBtn:active { opacity: 0.85; }
+    #dropzone {
+      border: 2px dashed var(--primary);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      background: #f0f7ff;
+      cursor: pointer;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #dropzone.dragover { background: #e0efff; }
+    #dropzone input { display: none; }
+    #fileList {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px;
+      background: var(--surface);
+      -webkit-overflow-scrolling: touch;
+    }
+    .file-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 10px 12px;
+      margin: 2px 0;
+      border: none;
+      background: transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .file-item:hover { background: #e9ecef; }
+    .file-item.active { background: var(--primary); color: #fff; }
+    #outputContainer {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      -webkit-overflow-scrolling: touch;
+    }
+    iframe, video, img {
+      max-width: 100%;
+      border: none;
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    video { max-height: 70vh; background: #000; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    table, th, td { border: 1px solid var(--border); }
+    th, td { padding: 8px; text-align: left; }
+    pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    .console-out {
+      background: #111;
+      color: #4af626;
+      padding: 12px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: pre-wrap;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <aside id="sidebar">
+    <button id="installBtn">⬇ Install App</button>
+
+    <div id="dropzone">
+      <strong>Select or Drop .ZIP</strong>
+      <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-muted);">Tap here to choose file</p>
+      <input type="file" id="fileInput" accept=".zip" />
+    </div>
+
+    <div id="fileList"><em>No archive loaded yet.</em></div>
+  </aside>
+
+  <main id="main">
+    <div id="outputContainer">
+      <p style="color: var(--text-muted);">Open a ZIP archive to display and run its files.</p>
+    </div>
+  </main>
+
+  <script>
+    /* Service Worker Registration */
+    let deferredPrompt = null;
+    const installBtn = document.getElementById('installBtn');
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then((reg) => console.log('SW Registered:', reg.scope))
+          .catch((err) => console.error('SW Registration Failed:', err));
+      });
+    }
+
+    /* PWA Install Trigger */
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBtn.style.display = 'block';
+    });
+
+    installBtn.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') installBtn.style.display = 'none';
+      deferredPrompt = null;
+    });
+
+    window.addEventListener('appinstalled', () => {
+      installBtn.style.display = 'none';
+    });
+
+    /* ZIP Processing Engine */
+    let zipInstance = null;
+    let pyodideInstance = null;
+    let activeObjectURL = null;
+
+    async function getPyodide() {
+      if (!pyodideInstance) pyodideInstance = await loadPyodide();
+      return pyodideInstance;
+    }
+
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) processZip(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length) processZip(e.target.files[0]);
+    });
+
+    async function processZip(file) {
+      const listEl = document.getElementById('fileList');
+      listEl.innerHTML = '<em>Reading archive...</em>';
+      
+      try {
+        const buffer = await file.arrayBuffer();
+        zipInstance = await JSZip.loadAsync(buffer);
+        listEl.innerHTML = '';
+
+        zipInstance.forEach((relativePath, entry) => {
+          if (!entry.dir) {
+            const btn = document.createElement('button');
+            btn.className = 'file-item';
+            btn.textContent = relativePath;
+            btn.onclick = () => {
+              document.querySelectorAll('.file-item').forEach(b => b.classList.remove('active'));
+              btn.classList.add('active');
+              renderFile(relativePath, entry);
+            };
+            listEl.appendChild(btn);
+          }
+        });
+      } catch (err) {
+        listEl.innerHTML = `<span style="color:red">Failed to read ZIP: ${err.message}</span>`;
+      }
+    }
+
+    async function renderFile(name, entry) {
+      const container = document.getElementById('outputContainer');
+      container.innerHTML = '<p>Processing...</p>';
+
+      if (activeObjectURL) {
+        URL.revokeObjectURL(activeObjectURL);
+        activeObjectURL = null;
+      }
+
+      const ext = name.split('.').pop().toLowerCase();
+
+      try {
+        if (['mp3', 'm4a', 'wav', 'ogg'].includes(ext)) {
+          const mime = ext === 'mp3' ? 'audio/mpeg' : (ext === 'm4a' ? 'audio/mp4' : `audio/${ext}`);
+          const blob = await entry.async('blob');
+          activeObjectURL = URL.createObjectURL(new Blob([blob], { type: mime }));
+          container.innerHTML = `<h3>${name}</h3><audio controls autoplay src="${activeObjectURL}" style="width:100%"></audio>`;
+        }
+        else if (['mp4', 'webm'].includes(ext)) {
+          const blob = await entry.async('blob');
+          activeObjectURL = URL.createObjectURL(new Blob([blob], { type: `video/${ext}` }));
+          container.innerHTML = `<h3>${name}</h3><video controls playsinline autoplay src="${activeObjectURL}"></video>`;
+        }
+        else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+          const blob = await entry.async('blob');
+          activeObjectURL = URL.createObjectURL(blob);
+          container.innerHTML = `<h3>${name}</h3><img src="${activeObjectURL}" alt="${name}" />`;
+        }
+        else if (['xlsx', 'xls', 'csv'].includes(ext)) {
+          const buffer = await entry.async('arraybuffer');
+          const workbook = XLSX.read(buffer, { type: 'array' });
+          const firstSheet = workbook.SheetNames[0];
+          const htmlTable = XLSX.utils.sheet_to_html(workbook.Sheets[firstSheet]);
+          container.innerHTML = `<h3>${name} (${firstSheet})</h3><div style="overflow:auto">${htmlTable}</div>`;
+        }
+        else if (ext === 'py') {
+          container.innerHTML = '<p>Loading Python engine...</p>';
+          const py = await getPyodide();
+          const code = await entry.async('string');
+
+          let logs = [];
+          py.setStdout({ batched: (msg) => logs.push(msg) });
+
+          let resultText = '';
+          try {
+            await py.runPythonAsync(code);
+            resultText = logs.join('\n') || '[Process completed with no output]';
+          } catch (pyErr) {
+            resultText = `Execution Error:\n${pyErr.message}`;
+          }
+
+          container.innerHTML = `
+            <h3>${name}</h3>
+            <strong>Source:</strong>
+            <pre><code>${escapeHtml(code)}</code></pre>
+            <strong>Output:</strong>
+            <div class="console-out">${escapeHtml(resultText)}</div>
+          `;
+        }
+        else if (['html', 'htm', 'pdf'].includes(ext)) {
+          const mime = ext === 'pdf' ? 'application/pdf' : 'text/html';
+          const blob = await entry.async('blob');
+          activeObjectURL = URL.createObjectURL(new Blob([blob], { type: mime }));
+          container.innerHTML = `<h3>${name}</h3><iframe src="${activeObjectURL}" style="width:100%; height:70vh;"></iframe>`;
+        }
+        else {
+          const content = await entry.async('string');
+          container.innerHTML = `<h3>${name}</h3><pre><code>${escapeHtml(content)}</code></pre>`;
+        }
+      } catch (err) {
+        container.innerHTML = `<span style="color:red">Failed to render ${name}: ${err.message}</span>`;
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, (m) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+      }[m]));
+    }
+  </script>
+</body>
+</html>
